@@ -1,0 +1,23 @@
+[MESSAGES CONTROL]
+
+disable=
+    # We have not been good at having docstrings. 
+    # Unless we fix that, we cannot use this.
+    missing-docstring,
+
+    # We use "except Exception:" in a lot of places and have no immediate
+    # plans to change that.
+    broad-except,
+
+    # We do not agree with pylint about variable names
+    # (but we should be able to use --*-naming-style instead of disabling)
+    invalid-name,
+
+    # Opinions about too many or too few entities
+    # Check this and add pylint: disable=... instead?
+    too-many-locals,
+    too-many-arguments,
+    too-few-public-methods,
+
+[FORMAT]
+max-line-length = 140
