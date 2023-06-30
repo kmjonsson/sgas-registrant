@@ -67,7 +67,7 @@ DEFAULT_REGISTRATION_TAG = "Registration"
 
 
 # subdirectories in the spool directory
-RECORD_DIRECTORY = "records"
+RECORD_DIRECTORY = "urs"
 STATE_DIRECTORY = "state"
 ARCHIVE_DIRECTORY = "archive"
 
