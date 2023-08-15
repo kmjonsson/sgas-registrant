@@ -38,6 +38,7 @@ CONFIG_CERTDIR = "x509_cert_dir"
 CONFIG_LOGDIR = "logdir"
 CONFIG_LOG_DIR = "log_dir"
 CONFIG_LOG_ALL = "log_all"
+CONFIG_LOG_VO = "log_vo"
 CONFIG_BATCH_SIZE = "batch_size"
 CONFIG_RECORD_LIFETIME = "record_lifetime"
 CONFIG_LOGFILE = "registrant_logfile"
@@ -138,6 +139,46 @@ def parseLogAll(value):
     return value.split(" ")
 
 
+def parseLogVO(value):
+    vo_regs = {}
+
+    if value is None or len(value) == 0:
+        return vo_regs
+
+    pairs = value.split(",")
+    for pair in pairs:
+        vo_name, url = pair.strip().split(" ", 2)
+        vo_regs[vo_name] = url
+    return vo_regs
+
+
+def parseURLifeTime(value):
+    ur_lifetime_days = int(value)
+    ur_lifetime_seconds = ur_lifetime_days * (24 * 60 * 60)
+    return ur_lifetime_seconds
+
+
+def getVONamesFromUsageRecord(ure, config):
+    """
+    Return the VO name element values of a usage record.
+    """
+    # for some reason the followng fails :-/
+    # >>> ur.getroot().findall(VO_NAME)
+    # so we do it the silly way and iterate over the tree instead.
+
+    vos = []
+    for e in ure.getroot():
+        if e.tag != config.user_identity:
+            continue
+        for f in e:
+            if f.tag != config.vo:
+                continue
+            for g in f:
+                if g.tag == config.vo_name:
+                    vos.append(g.text)
+    return vos
+
+
 def parseTimeout(value):
     (t1, t2) = value.split(",", 2)
     t1 = t1.strip()
@@ -160,7 +201,7 @@ def parseRecordLifeTime(value):
     return record_lifetime_seconds
 
 
-def createRegistrationPointsMapping(logdir, logpoints_all, records_directory):
+def createRegistrationPointsMapping(logdir, logpoints_all, logpoints_vo, config):
     """
     Create a mapping from all the usage records filenames to which endpoints they
     should be registered.
@@ -168,7 +209,7 @@ def createRegistrationPointsMapping(logdir, logpoints_all, records_directory):
     logging.info("Creating registration mapping (may take a little time)")
     mapping = {}
 
-    record_dir = os.path.join(logdir, records_directory)
+    record_dir = os.path.join(logdir, config.records_directory)
     for filename in os.listdir(record_dir):
         filepath = os.path.join(record_dir, filename)
         # skip if file is not a proper file
@@ -176,13 +217,20 @@ def createRegistrationPointsMapping(logdir, logpoints_all, records_directory):
             continue
 
         try:
-            ET.parse(filepath)
+            ure = ET.parse(filepath)
         except Exception as e:
             logging.info("Error parsing file %s, %s continuing", filepath, str(e))
             continue
 
+        vos = getVONamesFromUsageRecord(ure, config)
+
         for lp in logpoints_all:
             mapping.setdefault(lp, []).append(filename)
+
+        for vo in vos:
+            vo_lp = logpoints_vo.get(vo)
+            if vo_lp:
+                mapping.setdefault(vo_lp, []).append(filename)
 
     return mapping
 
@@ -522,6 +570,9 @@ class Config:
         records_directory,
         state_directory,
         archive_directory,
+        user_identity,
+        vo,
+        vo_name,
     ):
         self.context_factory = context_factory
         self.batch_size = batch_size
@@ -531,6 +582,9 @@ class Config:
         self.records_directory = records_directory
         self.state_directory = state_directory
         self.archive_directory = archive_directory
+        self.user_identity = ET.QName(f"{{{namespace}}}{user_identity}")
+        self.vo = ET.QName(f"{{{namespace}}}{vo}")
+        self.vo_name = ET.QName(f"{{{namespace}}}{vo_name}")
 
 
 class ConfigException(Exception):
@@ -582,11 +636,14 @@ def doMain():
 
     # Logger options
     las = getConfigOption(cfg, CONFIG_SECTION_LOGGER, CONFIG_LOG_ALL)
+    lvo = getConfigOption(cfg, CONFIG_SECTION_LOGGER, CONFIG_LOG_VO)
     rlt = getConfigOption(
         cfg, CONFIG_SECTION_LOGGER, CONFIG_RECORD_LIFETIME, DEFAULT_UR_LIFETIME
     )
     log_all = parseLogAll(las)
+    log_vo = parseLogVO(lvo)
     record_lifetime = parseRecordLifeTime(rlt)
+
     timeout = getConfigOption(
         cfg, CONFIG_SECTION_LOGGER, CONFIG_TIMEOUT, DEFAULT_TIMEOUT
     )
@@ -627,6 +684,9 @@ def doMain():
         records_directory=records_directory,
         state_directory=state_directory,
         archive_directory=archive_directory,
+        user_identity="UserIdentity",
+        vo="VO",
+        vo_name="Name",
     )
 
     logging.info("Configuration:")
@@ -644,9 +704,7 @@ def doMain():
         logging.error("Log directory '%s' does not exist, bailing out.", log_dir)
         return
 
-    mapping = createRegistrationPointsMapping(
-        log_dir, log_all, config.records_directory
-    )
+    mapping = createRegistrationPointsMapping(log_dir, log_all, log_vo, config)
 
     registerUsageRecords(mapping, log_dir, config)
 
