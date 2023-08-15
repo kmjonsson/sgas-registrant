@@ -35,6 +35,7 @@ CONFIG_SECTION_LOGGER = "logger"
 CONFIG_HOSTKEY = "x509_user_key"
 CONFIG_HOSTCERT = "x509_user_cert"
 CONFIG_CERTDIR = "x509_cert_dir"
+CONFIG_LOGDIR = "logdir"
 CONFIG_LOG_DIR = "log_dir"
 CONFIG_LOG_ALL = "log_all"
 CONFIG_BATCH_SIZE = "batch_size"
@@ -567,7 +568,10 @@ def doMain():
 
     # Where are records stored?
     log_dir = getConfigOption(
-        cfg, CONFIG_SECTION_COMMON, CONFIG_LOG_DIR, DEFAULT_LOG_DIR
+        cfg,
+        CONFIG_SECTION_COMMON,
+        CONFIG_LOGDIR,
+        getConfigOption(cfg, CONFIG_SECTION_COMMON, CONFIG_LOG_DIR, DEFAULT_LOG_DIR),
     )
 
     # Logger options
