@@ -47,6 +47,10 @@ CONFIG_NAMESPACE = "namespace"
 CONFIG_RECORDS_TAG = "records_tag"
 CONFIG_REGISTRATION_TAG = "registration_tag"
 CONFIG_TIMEOUT = "timeout"
+# subdirectories in the spool directory
+CONFIG_RECORDS_DIRECTORY = "records_directory"
+CONFIG_STATE_DIRECTORY = "state_directory"
+CONFIG_ARCHIVE_DIRECTORY = "archive_directory"
 
 # system defaults
 DEFAULT_CONFIG_FILE = "/etc/bart/bart.conf"
@@ -65,42 +69,35 @@ DEFAULT_LOGLEVEL = logging.INFO
 DEFAULT_NAMESPACE = "http://schema.ogf.org/urf/2003/09/urf"
 DEFAULT_RECORDS_TAG = "UsageRecords"
 DEFAULT_REGISTRATION_TAG = "Registration"
-
-
 # subdirectories in the spool directory
-RECORD_DIRECTORY = "urs"
-STATE_DIRECTORY = "state"
-ARCHIVE_DIRECTORY = "archive"
+DEFAULT_RECORDS_DIRECTORY = "urs"
+DEFAULT_STATE_DIRECTORY = "state"
+DEFAULT_ARCHIVE_DIRECTORY = "archive"
 
-# namespaces and tag names, only needed ones
-# DEFAULT_NAMESPACE       = 'http://sams.snic.se/namespaces/2019/01/softwareaccountingrecords'
-# DEFAULT_RECORDS_TAG     = 'SoftwareAccountingRecords'
-# REGISTRATION_TAG        = 'SoftwareAccountingRegistration'
 
 # -- code
-
-
 class StateFile:
     """
     Abstraction for a storage record statefile (describes whereto a record has been registered).
     """
 
-    def __init__(self, logdir, filename):
+    def __init__(self, logdir, filename, state_directory):
         self.logdir = logdir
         self.filename = filename
+        self.state_directory = state_directory
 
         statefile = self._filepath()
         if os.path.exists(statefile):
             with open(statefile, encoding="utf-8") as f:
                 self.urls = set(line.strip() for line in f.readlines() if line.strip())
         else:
-            statedir = os.path.join(logdir, STATE_DIRECTORY)
+            statedir = os.path.join(logdir, self.state_directory)
             if not os.path.exists(statedir):
                 os.makedirs(statedir)
             self.urls = set()
 
     def _filepath(self):
-        return os.path.join(self.logdir, STATE_DIRECTORY, self.filename)
+        return os.path.join(self.logdir, self.state_directory, self.filename)
 
     def __contains__(self, ele):
         return ele in self.urls
@@ -163,7 +160,7 @@ def parseRecordLifeTime(value):
     return record_lifetime_seconds
 
 
-def createRegistrationPointsMapping(logdir, logpoints_all):
+def createRegistrationPointsMapping(logdir, logpoints_all, records_directory):
     """
     Create a mapping from all the usage records filenames to which endpoints they
     should be registered.
@@ -171,7 +168,7 @@ def createRegistrationPointsMapping(logdir, logpoints_all):
     logging.info("Creating registration mapping (may take a little time)")
     mapping = {}
 
-    record_dir = os.path.join(logdir, RECORD_DIRECTORY)
+    record_dir = os.path.join(logdir, records_directory)
     for filename in os.listdir(record_dir):
         filepath = os.path.join(record_dir, filename)
         # skip if file is not a proper file
@@ -295,11 +292,11 @@ def createEPRegistrationMapping(endpoints, config):
     return mergeResults(defs)
 
 
-def joinRecordFiles(logdir, filenames, records):
+def joinRecordFiles(logdir, filenames, records, records_directory):
     recs = ET.Element(records)
 
     for fn in filenames:
-        rec = ET.parse(os.path.join(logdir, RECORD_DIRECTORY, fn))
+        rec = ET.parse(os.path.join(logdir, records_directory, fn))
         recs.append(rec.getroot())
 
     return ET.tostring(recs)
@@ -311,7 +308,9 @@ def registerBatch(ep, url, logdir, filenames, config):
     service.
     """
 
-    ur_data = joinRecordFiles(logdir, filenames, config.records)
+    ur_data = joinRecordFiles(
+        logdir, filenames, config.records, config.records_directory
+    )
     logging.debug(ur_data)
     try:
         httpRequest(
@@ -323,7 +322,7 @@ def registerBatch(ep, url, logdir, filenames, config):
         )
         logging.info("%i records registered to %s", len(filenames), ep)
         for fn in filenames:
-            StateFile(logdir, fn).add(ep).write()
+            StateFile(logdir, fn, config.state_directory).add(ep).write()
 
     except Exception as e:
         logging.error("Error during batch insertion: %s", str(e))
@@ -347,7 +346,7 @@ def registerUsageRecords(mapping, logdir, config):
 
     performURRegistration(regmap, urmap, logdir, config)
 
-    archiveUsageRecords(logdir, urmap)
+    archiveUsageRecords(logdir, urmap, config)
 
 
 def performURRegistration(regmap, urmap, logdir, config):
@@ -366,7 +365,7 @@ def performURRegistration(regmap, urmap, logdir, config):
 
     # new registration logic (batching)
     for filename, endpoints in urmap.items():
-        state = StateFile(logdir, filename)
+        state = StateFile(logdir, filename, config.state_directory)
         for ep in endpoints:
             if ep in state:
                 skipped_registrations[ep] = skipped_registrations.get(ep, 0) + 1
@@ -408,29 +407,29 @@ def performURRegistration(regmap, urmap, logdir, config):
             error_endpoints[service_endpoint] = True
 
 
-def archiveUsageRecords(logdir, urmap):
+def archiveUsageRecords(logdir, urmap, config):
     logging.info("Registration done, commencing archiving process")
-    archive_dir = os.path.join(logdir, ARCHIVE_DIRECTORY)
+    archive_dir = os.path.join(logdir, config.archive_directory)
     if not os.path.exists(archive_dir):
         os.makedirs(archive_dir)
 
     for filename, endpoints in urmap.items():
-        state = StateFile(logdir, filename)
+        state = StateFile(logdir, filename, config.state_directory)
         for ep in endpoints:
             if not ep in state:
                 break
         else:
-            urfilepath = os.path.join(logdir, RECORD_DIRECTORY, filename)
-            statefilepath = os.path.join(logdir, STATE_DIRECTORY, filename)
-            archivefilepath = os.path.join(logdir, ARCHIVE_DIRECTORY, filename)
+            urfilepath = os.path.join(logdir, config.records_directory, filename)
+            statefilepath = os.path.join(logdir, config.state_directory, filename)
+            archivefilepath = os.path.join(logdir, config.archive_directory, filename)
             os.unlink(statefilepath)
             os.rename(urfilepath, archivefilepath)
 
     logging.info("Archiving done")
 
 
-def deleteOldUsageRecords(log_dir, ttl_seconds):
-    archive_dir = os.path.join(log_dir, ARCHIVE_DIRECTORY)
+def deleteOldUsageRecords(log_dir, ttl_seconds, archive_directory):
+    archive_dir = os.path.join(log_dir, archive_directory)
     logging.info("Cleaning up old records.")
 
     now = time.time()
@@ -506,6 +505,7 @@ def setupLogging(options, cfg):
         )
 
 
+# pylint: disable=too-many-instance-attributes
 class Config:
     """
     Collection of config parameters.
@@ -514,17 +514,23 @@ class Config:
     def __init__(
         self,
         context_factory,
-        batch_size=DEFAULT_BATCH_SIZE,
-        registration_tag=DEFAULT_REGISTRATION_TAG,
-        namespace=DEFAULT_NAMESPACE,
-        records_tag=DEFAULT_RECORDS_TAG,
-        timeout=parseTimeout(DEFAULT_TIMEOUT),
+        batch_size,
+        registration_tag,
+        namespace,
+        records_tag,
+        timeout,
+        records_directory,
+        state_directory,
+        archive_directory,
     ):
         self.context_factory = context_factory
         self.batch_size = batch_size
         self.registration_tag = registration_tag
         self.records = ET.QName(f"{{{namespace}}}{records_tag}")
         self.timeout = timeout
+        self.records_directory = records_directory
+        self.state_directory = state_directory
+        self.archive_directory = archive_directory
 
 
 class ConfigException(Exception):
@@ -599,6 +605,18 @@ def doMain():
         cfg, CONFIG_SECTION_LOGGER, CONFIG_NAMESPACE, DEFAULT_NAMESPACE
     )
 
+    records_directory = getConfigOption(
+        cfg, CONFIG_SECTION_LOGGER, CONFIG_RECORDS_DIRECTORY, DEFAULT_RECORDS_DIRECTORY
+    )
+
+    state_directory = getConfigOption(
+        cfg, CONFIG_SECTION_LOGGER, CONFIG_STATE_DIRECTORY, DEFAULT_STATE_DIRECTORY
+    )
+
+    archive_directory = getConfigOption(
+        cfg, CONFIG_SECTION_LOGGER, CONFIG_ARCHIVE_DIRECTORY, DEFAULT_ARCHIVE_DIRECTORY
+    )
+
     config = Config(
         context_factory=ContextFactory(host_key, host_cert, cert_dir),
         registration_tag=registration_tag,
@@ -606,6 +624,9 @@ def doMain():
         namespace=namespace,
         timeout=parseTimeout(timeout),
         batch_size=int(batch_size),
+        records_directory=records_directory,
+        state_directory=state_directory,
+        archive_directory=archive_directory,
     )
 
     logging.info("Configuration:")
@@ -623,11 +644,13 @@ def doMain():
         logging.error("Log directory '%s' does not exist, bailing out.", log_dir)
         return
 
-    mapping = createRegistrationPointsMapping(log_dir, log_all)
+    mapping = createRegistrationPointsMapping(
+        log_dir, log_all, config.records_directory
+    )
 
     registerUsageRecords(mapping, log_dir, config)
 
-    deleteOldUsageRecords(log_dir, record_lifetime)
+    deleteOldUsageRecords(log_dir, record_lifetime, config.archive_directory)
 
 
 if __name__ == "__main__":
