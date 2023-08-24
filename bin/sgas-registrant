@@ -305,24 +305,9 @@ def createEPRegistrationMapping(endpoints, config):
                         return createRegistrationURL(location, endpoint)
         return None  # no registration service found
 
-    def mergeResults(results):
-        regmap = {}
-        for (success, result), ep in zip(results, endpoints):
-            if success and result is not None:
-                regmap[ep] = result
-            elif success:
-                logging.error(
-                    "Endpoint %s does not appear to have a registration service.", ep
-                )
-            else:
-                logging.error(
-                    "Error contacting service %s (%s)", ep, result.getErrorMessage()
-                )
-        return regmap
-
     logging.info("Retrieving registration hrefs (service endpoints)")
 
-    defs = []
+    regmap = {}
     for ep in endpoints:
         try:
             content = httpRequest(
@@ -331,13 +316,17 @@ def createEPRegistrationMapping(endpoints, config):
             logging.debug(content)
             registration_url = gotReply(content, ep)
             logging.debug(registration_url)
-            defs.append((True, registration_url))
+            if registration_url is None:
+                logging.error(
+                    "Endpoint %s does not appear to have a registration service.", ep
+                )
+            else:
+                regmap[ep] = registration_url
         except Exception as e:
             logging.error(e)
-            defs.append((False, None))
 
-    logging.debug(defs)
-    return mergeResults(defs)
+    logging.debug(regmap)
+    return regmap
 
 
 def joinRecordFiles(logdir, filenames, records, records_directory):
